@@ -230,3 +230,4 @@ Data in a LiveData object are only readable, cant be edited.
               binding.resultTextView.text = it.toString()
           })
    ```
+More detail please see the Android Jetpack, Clean Architecture & Testing Masterclass.md
