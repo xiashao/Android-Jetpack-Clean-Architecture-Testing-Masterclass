@@ -230,4 +230,52 @@ Data in a LiveData object are only readable, cant be edited.
               binding.resultTextView.text = it.toString()
           })
    ```
-More detail please see the Android Jetpack, Clean Architecture & Testing Masterclass.md
+
+# Section 5 View Model & Live Data With Data Binding
+
+In the xml bind a click function for button.
+
+```
+android:onClick="@{()->myViewModel.setUpdatedCount(1)}"
+```
+
+## Usage
+
+1. In XML, bind the Live Data directly.
+
+```
+android:text="@{myViewModel.countData.toString()}"
+```
+
+2. Assign the viewModel to myViewModel in Activity.
+
+```
+binding.myViewModel = viewModel
+```
+
+3. Set the lifecycleOwner of binding as this.
+
+```
+binding.lifecycleOwner = this
+```
+
+4. Delete the observe function of data.
+
+**Note:**
+
+If we want to provide more security to our data, If we want to encapsulate our data
+
+we can make this variable private and create a public live data variable.
+
+```
+private var count = MutableLiveData<Int>()
+val countData : LiveData<Int>
+get() = count
+```
+
+## Two Way Data Binding
+
+```
+android:text="@={myViewModel.username}"
+```
+
