@@ -279,3 +279,72 @@ get() = count
 android:text="@={myViewModel.username}"
 ```
 
+# Section 6
+
+## Project SetUp
+
+### Usage
+
+1. Open this [website](https://developer.android.com/jetpack/androidx/releases/navigation) and Add dependencies.
+
+   ```
+   def nav_version = "2.3.4"
+   // Kotlin
+     implementation "androidx.navigation:navigation-fragment-ktx:$nav_version"
+     implementation "androidx.navigation:navigation-ui-ktx:$nav_version"
+   ```
+
+2. To add [Safe Args](https://developer.android.com/topic/libraries/architecture/navigation/navigation-pass-data#Safe-args) to your project, include the following `classpath` in your top level `build.gradle` file:
+
+   ```
+   buildscript {
+       repositories {
+           google()
+       }
+       dependencies {
+           def nav_version = "2.3.4"
+           classpath "androidx.navigation:navigation-safe-args-gradle-plugin:$nav_version"
+       }
+   }
+   ```
+
+3. To generate Kotlin code suitable for Kotlin-only modules add:
+
+​	` apply plugin: "androidx.navigation.safeargs.kotlin"`
+
+4. Data binding
+
+   ```
+    dataBinding{
+           enabled = true
+     }
+   ```
+
+5.  Select the app , Right click, New, Android resource file. Select the resource type as navigation.
+
+6.  In xml, click design, drag a NavHostFragment into design and add the constrains.
+
+7. Create destination. Double click this fragment to open it and convert into constraint layout.
+
+8. Set data binding in onCreateView
+
+   ```
+   binding = DataBindingUtil.inflate(inflater,R.layout.fragment_home,container,false)
+   return binding.root
+   ```
+
+9. Add action.
+
+   ```
+   Click within the circle and drag the resulting line to the SecondFragment and release .
+   ```
+
+10. Set click listener for button.
+
+    ```
+    binding.button.setOnClickListener {
+    	it.findNavController().navigate(R.id.action_homeFragment_to_blankFragment)
+    }
+    ```
+
+    
