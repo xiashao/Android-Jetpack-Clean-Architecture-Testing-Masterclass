@@ -347,4 +347,268 @@ android:text="@={myViewModel.username}"
     }
     ```
 
-    
+### Transforming Data Between Destinations
+
+1. In the first fragment, Create a Bundle to transform data.
+
+   ```
+   val bundle = bundleOf("input" to binding.editTextTextPersonName.text.toString())
+                   it.findNavController().navigate(R.id.action_homeFragment_to_blankFragment,bundle)
+   ```
+
+2. In the second fragment, use `arguments`to get the data.
+
+   ```
+   var input: String? = arguments!!.getString("input")
+   ```
+
+### Animations For Actions
+
+In `nav_graph`, click arrow, input the animation for adding animations in design view.  	
+
+**Note:**
+
+if the preview cant shown, change to code mode first and add codes as follow:
+
+```
+xmlns:app="http://schemas.android.com/apk/res-auto" android:id="@+id/nav_graph"
+ <fragment
+     	...
+        tools:layout="@layout/fragment_home"/>
+```
+
+# Section 7
+
+Create data class:
+
+```
+data class Fruit (val name:String, val supplier: String)
+```
+
+# Section 8
+
+## Usage:
+
+```
+  CoroutineScope(Dispatchers.IO).launch {
+      downloadUserData()
+  }
+```
+
+## Dispachers
+
+### Dispatchers.Main
+
+The coroutine will run in the Main Thread. In android we also call it UI thread.
+
+### Dispatchers.IO
+
+The coroutine will run in a background thread from a shared pool of on-demand created threads.
+
+### Dispatchers.Default
+
+Default dispatcher is used for CPU intensive tasks.
+
+### Dispatchers.Unconfined
+
+Unconfined Coroutine will run on the current thread, but if it is suspended and resumed, it will run on whichever thread that the suspending function is running on. It is not recommended to use this dispatcher for Android Development.
+
+## Lauch
+
+This launch is the coroutine builder. it launches a new co routine without blocking the current thread. Return an instance of Job so we can track of the coroutine to cancel it.
+
+we cannot use this coroutine to calculate something and get the final answer as the returned value.
+
+## Async
+
+launches a new coroutine without blocking the current thread. **Returns an instance of Deferred of type of the result.**
+
+## Produce
+
+produce a stream of elements.  **returns an instance of ReceiveChannel.**
+
+## RunBlocking
+
+Will block the thread until its execution is over. **Returns a result which we can directly use.**
+
+## Async & Await
+
+```
+CoroutineScope(Dispatchers.IO).launch {
+    val stock1 = async { 
+        getStock1()
+    }
+    val stock2 = async {
+        getStock2()
+    }
+   val total = stock1.await() + stock2.await()
+}
+```
+
+## Structured Concurrency
+
+When you have more than one coroutines, you should always start with the Dispatchers.Main . You should always start with the CoroutineScope interface. And inside suspending functions you should use coroutineScope function which starts with the simple 'c' to provide a child scope.
+
+```
+coroutineScope{
+    launch(IO) {
+        delay(1000)
+        count = 50
+    }
+    deferred = async(IO) {
+        delay(1000)
+        return@async 20
+    }
+}
+
+return count + deferred.await()
+```
+
+## ViewModelScope
+
+Using viewModelScope to avoid memory leak.
+
+```
+fun getData(){
+    viewModelScope.launch {
+
+   }
+}
+```
+
+## lifecycleScope
+
+All the coroutines in this new scope will be canceled when the Lifecycle is destroyed.
+
+It can chose the time to lunch.
+
+```
+lifecycleScope.launchWhenCreated {  }
+lifecycleScope.launchWhenStarted {  }
+lifecycleScope.launchWhenResumed {  }
+```
+
+## Live Data Builder
+
+Add dependence.
+
+```
+implementation "androidx.lifecycle:lifecycle-livedata-ktx:$arch_version"
+```
+
+Usage
+
+Inside the LiveData building block, you can use emit() function to set a value to the LiveData.
+
+```
+var users = liveData(Dispatchers.IO){
+    val result = usersRepository.getUsers()
+    emit(result)
+}
+```
+
+In mainActivity.
+
+```
+mainActivityViewModel.users.observe(this, Observer { myuser ->
+    myuser.forEach {
+        Log.i("MyTag","name is ${it.name}")
+    }
+})
+```
+
+# Room
+
+## Room Entity Classes
+
+```
+@Entity(tableName = "subscriber_data_table")
+data class Subscriber(
+    @PrimaryKey(autoGenerate = true)
+    @ColumnInfo(name = "subscriber_id")
+    val id: Int,
+    @ColumnInfo(name = "subscriber_name")
+    val name: String,
+    @ColumnInfo(name = "subscriber_email")
+    val email: String
+) {
+}
+```
+
+## Data Access Object Interface(DAO)
+
+### Usage
+
+```
+@Dao
+interface SubscriberDAO {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(subscriber: Subscriber): Long
+    @Update
+    suspend fun update(subscriber: Subscriber)
+    @Delete
+    suspend fun delete(subscriber: Subscriber)
+    @Query("DELETE FROM subscriber_data_table")
+    suspend fun deliteAll()
+    @Query("SELECT * FROM subscriber_data_table")
+    fun getAllSubscribers():LiveData<List<Subscriber>> 
+    //this function doesn't need to do in background
+}
+```
+
+OnConflictStrategy.REPLACE means if you insert the same entity, the newer one will replace the older one.
+
+##  Room Database Class
+
+### Usage:
+
+Need to create a singleton. Can copy this to use
+
+```
+@Database(entities = [Subscriber::class],version = 1)
+abstract class SubscriberDataBase :RoomDatabase(){
+    abstract val subscriberDAO: SubscriberDAO
+    companion object{
+        @Volatile
+        private var INSTANCE : SubscriberDataBase? = null
+            fun getInstance(context: Context): SubscriberDataBase{
+                synchronized(this){
+                    var instance: SubscriberDataBase? = INSTANCE
+                        if(instance == null){
+                            instance  = databaseBuilder(
+                                context.applicationContext,
+                                SubscriberDataBase::class.java,
+                                "subscriber_data_database"
+                            ).build()
+                        }
+                    return instance
+                }
+            }
+    }
+}
+```
+
+## Repository In MVVM
+
+![img](https://developer.android.com/topic/libraries/architecture/images/final-architecture.png)
+
+### Usage:
+
+```
+class SubscriberRepository(private val dao: SubscriberDAO) {
+    val subscribers = dao.getAllSubscribers()
+    //use suspend fun to do in background thread
+    suspend fun insert(subscriber: Subscriber){
+        dao.insert(subscriber)
+    }
+    suspend fun update(subscriber: Subscriber){
+        dao.update(subscriber)
+    }
+    suspend fun delete(subscriber: Subscriber){
+        dao.delete(subscriber)
+    }
+    suspend fun deleteAll(){
+        dao.deliteAll()
+    }
+}
+```
