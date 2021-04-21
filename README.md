@@ -279,7 +279,7 @@ get() = count
 android:text="@={myViewModel.username}"
 ```
 
-# Section 6
+# Section 6 **Navigation Architecture**
 
 ## Project SetUp
 
@@ -385,7 +385,7 @@ Create data class:
 data class Fruit (val name:String, val supplier: String)
 ```
 
-# Section 8
+# Section 8 **Kotlin Coroutines Fundamentals**
 
 ## Usage:
 
@@ -517,7 +517,7 @@ mainActivityViewModel.users.observe(this, Observer { myuser ->
 })
 ```
 
-# Room
+# Section9 Room
 
 ## Room Entity Classes
 
@@ -535,9 +535,9 @@ data class Subscriber(
 }
 ```
 
-## Data Access Object Interface(DAO)
+### Data Access Object Interface(DAO)
 
-### Usage
+#### Usage
 
 ```
 @Dao
@@ -612,3 +612,114 @@ class SubscriberRepository(private val dao: SubscriberDAO) {
     }
 }
 ```
+
+## Create A ViewModel
+
+Design the viewModel
+
+```
+class SubscriberViewModel(private val repository: SubscriberRepository):ViewModel() {
+    val subscribers = repository.subscribers
+    val inputName = MutableLiveData<String>()
+    val inputEmail = MutableLiveData<String>()
+    val saveText = MutableLiveData<String>()
+    val cleanText = MutableLiveData<String>()
+    init {
+        saveText.value = "Save"
+        cleanText.value = "Clear Text"
+    }
+    fun update(){
+        val name= inputName.value!!
+        val email = inputEmail.value!!
+        insert(Subscriber(0,name,email))
+        inputName.value = null
+        inputEmail.value = null
+    }
+ }
+```
+
+And create the viewModelFactory
+
+```
+class SubscriberViewModelFactory(private val repository: SubscriberRepository):ViewModelProvider.Factory{
+    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+        if(modelClass.isAssignableFrom(SubscriberViewModel::class.java)){
+            return SubscriberViewModel(repository) as T
+        }
+        throw IllegalArgumentException("Unknow View Model Class")
+    }
+}
+```
+
+Set viewModel and bingding in the MainActivity
+
+```
+binding = DataBindingUtil.setContentView(this,R.layout.activity_main)
+val dao = SubscriberDataBase.getInstance(application).subscriberDAO
+val repository = SubscriberRepository(dao)
+val factory = SubscriberViewModelFactory(repository)
+viewModel = ViewModelProvider(this,factory).get(SubscriberViewModel::class.java)
+binding.subscriberViewModel = viewModel
+binding.lifecycleOwner = this
+viewModel.subscribers.observe(this, Observer {
+    Log.i("smx", "onCreate: ${it.toString()}")
+})
+```
+
+## RecycleView
+
+Create adapter:
+
+```
+class MyRecyclerViewAdapter(private val subscriberList: List<Subscriber>, private val clickListener: (Subscriber) -> Unit) :
+    RecyclerView.Adapter<MyViewHolder>() {
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MyViewHolder {
+        val layoutInflater = LayoutInflater.from(parent.context)
+        val binding:ListItemBinding = DataBindingUtil.inflate(layoutInflater,R.layout.list_item,parent,false)
+        return MyViewHolder(binding)
+    }
+
+    override fun getItemCount(): Int {
+        return subscriberList.size
+    }
+
+    override fun onBindViewHolder(holder: MyViewHolder, position: Int) {
+        holder.bind(subscriberList[position],clickListener)
+    }
+
+}
+class MyViewHolder(val binding:ListItemBinding):RecyclerView.ViewHolder(binding.root){
+    fun bind(subscriber: Subscriber, clickListener: (Subscriber) -> Unit){
+        binding.nameTextView.text = subscriber.name
+        binding.emailTextView.text = subscriber.email
+    }
+}
+```
+
+In MainActivity, set the adapter to recycleView:
+
+```
+class MainActivity : AppCompatActivity() {
+    private lateinit var binding:ActivityMainBinding
+    private lateinit var viewModel: SubscriberViewModel
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = DataBindingUtil.setContentView(this,R.layout.activity_main)
+        val dao = SubscriberDataBase.getInstance(application).subscriberDAO
+        val repository = SubscriberRepository(dao)
+        val factory = SubscriberViewModelFactory(repository)
+        viewModel = ViewModelProvider(this,factory).get(SubscriberViewModel::class.java)
+        binding.subscriberViewModel = viewModel
+        binding.lifecycleOwner = this
+        binding.subscriberRecyclerView.layoutManager = LinearLayoutManager(this)
+        viewModel.subscribers.observe(this, Observer {
+            binding.subscriberRecyclerView.adapter = MyRecyclerViewAdapter(it,{selectItem:Subscriber -> listItemClicked(selectItem)})
+        })
+        //binding.subscriberRecyclerView.adapter = MyRecyclerViewAdapter(viewModel.subscribers.value!!)
+    }
+    fun listItemClicked(subscriber: Subscriber): Unit {
+        Toast.makeText(this,"selected name is ${subscriber.name}",Toast.LENGTH_LONG)
+    }
+}
+```
+
