@@ -671,8 +671,9 @@ viewModel.subscribers.observe(this, Observer {
 Create adapter:
 
 ```
-class MyRecyclerViewAdapter(private val subscriberList: List<Subscriber>, private val clickListener: (Subscriber) -> Unit) :
+class MyRecyclerViewAdapter( private val clickListener: (Subscriber) -> Unit) :
     RecyclerView.Adapter<MyViewHolder>() {
+    private val subscriberList  = ArrayList<Subscriber>()
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MyViewHolder {
         val layoutInflater = LayoutInflater.from(parent.context)
         val binding:ListItemBinding = DataBindingUtil.inflate(layoutInflater,R.layout.list_item,parent,false)
@@ -686,12 +687,18 @@ class MyRecyclerViewAdapter(private val subscriberList: List<Subscriber>, privat
     override fun onBindViewHolder(holder: MyViewHolder, position: Int) {
         holder.bind(subscriberList[position],clickListener)
     }
-
+    fun setList(subscribers: List<Subscriber>): Unit {
+        subscriberList.clear()
+        subscriberList.addAll(subscribers)
+    }
 }
 class MyViewHolder(val binding:ListItemBinding):RecyclerView.ViewHolder(binding.root){
     fun bind(subscriber: Subscriber, clickListener: (Subscriber) -> Unit){
         binding.nameTextView.text = subscriber.name
         binding.emailTextView.text = subscriber.email
+        binding.itemLayout.setOnClickListener {
+            clickListener(subscriber)
+        }
     }
 }
 ```
@@ -702,6 +709,7 @@ In MainActivity, set the adapter to recycleView:
 class MainActivity : AppCompatActivity() {
     private lateinit var binding:ActivityMainBinding
     private lateinit var viewModel: SubscriberViewModel
+    private lateinit var adapter:MyRecyclerViewAdapter
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = DataBindingUtil.setContentView(this,R.layout.activity_main)
@@ -711,15 +719,403 @@ class MainActivity : AppCompatActivity() {
         viewModel = ViewModelProvider(this,factory).get(SubscriberViewModel::class.java)
         binding.subscriberViewModel = viewModel
         binding.lifecycleOwner = this
-        binding.subscriberRecyclerView.layoutManager = LinearLayoutManager(this)
-        viewModel.subscribers.observe(this, Observer {
-            binding.subscriberRecyclerView.adapter = MyRecyclerViewAdapter(it,{selectItem:Subscriber -> listItemClicked(selectItem)})
-        })
+        initAdapter()
+        display()
         //binding.subscriberRecyclerView.adapter = MyRecyclerViewAdapter(viewModel.subscribers.value!!)
+        viewModel.message.observe(this, Observer {
+            it.getContentIfNotHandled()?.let {
+                Toast.makeText(this, it, Toast.LENGTH_LONG).show()
+            }
+        })
     }
+
+    private fun initAdapter() {
+        binding.subscriberRecyclerView.layoutManager = LinearLayoutManager(this)
+        adapter = MyRecyclerViewAdapter({selectedItem:Subscriber -> listItemClicked(selectedItem)})
+        binding.subscriberRecyclerView.adapter = adapter
+    }
+
+    private fun display() {
+        viewModel.subscribers.observe(this, Observer {
+            adapter.setList(it)
+            adapter.notifyDataSetChanged()
+        })
+    }
+
     fun listItemClicked(subscriber: Subscriber): Unit {
-        Toast.makeText(this,"selected name is ${subscriber.name}",Toast.LENGTH_LONG)
+       viewModel.initUpdatedOrDelete(subscriber)
+        Toast.makeText(this,"selected name is ${subscriber.name}",Toast.LENGTH_LONG).show()
     }
 }
 ```
 
+Use Event to control the status:
+
+```
+open class Event<out T>(private val content: T) {
+
+    var hasBeenHandled = false
+        private set // Allow external read but not write
+
+    /**
+     * Returns the content and prevents its use again.
+     */
+    fun getContentIfNotHandled(): T? {
+        return if (hasBeenHandled) {
+            null
+        } else {
+            hasBeenHandled = true
+            content
+        }
+    }
+
+    /**
+     * Returns the content, even if it's already been handled.
+     */
+    fun peekContent(): T = content
+}
+```
+
+**Note:**
+
+the suspend fun in Dao file can give you a return value .
+
+```
+@Insert(onConflict = OnConflictStrategy.REPLACE)
+suspend fun insert(subscriber: Subscriber): Long
+```
+
+return the rowid.
+
+```
+@Update
+suspend fun update(subscriber: Subscriber):Int
+```
+
+return the number of updated rows.
+
+```
+@Delete
+suspend fun delete(subscriber: Subscriber)
+```
+
+return the number of deleted rows.
+
+# Section13 Dagger
+
+## Dependency Injection
+
+```
+val battery = Battery()
+val smartPhone = SmartPhone(battery)
+```
+
+## Constructor Injection
+
+```
+val smartPhone = SmartPhone(Battery())
+```
+
+## Method Injection
+
+```
+private lateinit var smartPhoneProvider:ServiceProvider
+fun setSmartPhoneProvider(serviceProvider: ServiceProvider){
+    this.smartPhoneProvider = serviceProvider
+}
+```
+
+## Field Injection
+
+```
+public lateinit var smartPhoneProvider:ServiceProvider
+```
+
+## Dagger2
+
+Add dependencies.
+
+https://developer.android.com/training/dependency-injection/dagger-android
+
+```kotlin
+implementation 'com.google.dagger:dagger:2.27'
+kapt 'com.google.dagger:dagger-compiler:2.27'
+```
+
+Apply plugin
+
+```
+apply plugin: 'kapt'
+```
+
+
+
+# Section15 Unit Test
+
+## Add denpendencies.
+
+```
+testImplementation 'junit:junit:4.12'
+// optional - Test helpers for LiveData
+testImplementation "androidx.arch.core:core-testing:$arch_version"
+androidTestImplementation 'androidx.test.ext:junit:1.1.2'
+androidTestImplementation 'androidx.test.espresso:espresso-core:3.3.0'
+// optional - Test helpers for LiveData
+testImplementation "androidx.arch.core:core-testing:$arch_version"
+testImplementation "com.google.truth:truth:1.1.2"
+```
+
+## Usage
+
+1. To generate a test class, right click on the class name. Then select generate from the menu. Then select test.
+
+2. we are going to use is JUNIT4.
+
+3. select test directory from this choose destination directory dialog.
+
+4. Add @Test annotation.
+
+   ```
+   @Test
+   fun calculateCircumference_radiusGaven_returnsCorrectResult(){
+   }
+   ```
+
+5. create an instance of MyCalc Class. 
+
+   ```
+   private  lateinit var myCalc: MyCalc
+   ```
+
+6. import the function assertThat `com.google.common.truth.Truth.assertThat`
+
+```
+class MyCalcTest{
+    private  lateinit var myCalc: MyCalc
+    @Test
+    fun calculateCircumference_radiusGaven_returnsCorrectResult(){
+        myCalc = MyCalc()
+        val result = myCalc.calculateCircumference(3.1)
+        assertThat(result).isEqualTo(13.188)
+    }
+}
+```
+
+## Test Double
+
+### Fakes
+
+Fakes, Stubs and Mocks. A Fake is a light weight implementation class of the Interface, usually we hand code fake classes. 
+
+### Stubs
+
+A stub is an object that provides predefined return values to method calls. 
+
+### Mocks
+
+A mock is similar to stub, but they allows tester to set answers to method calls when writing the test case. That means In mocks we dynamically set expected return values for the method calls. Not like fakes, **we  usually generate stubs and mocks using a testing framework.**
+
+## Test viewmodel
+
+1. add dependences
+
+   ```
+   testImplementation 'org.mockito:mockito-core:1.10.19'
+   ```
+
+   https://developer.android.com/training/testing/unit-testing/local-unit-tests
+
+2. Add rule if you test the livedata
+
+```
+@get:Rule
+var instantTaskExecutorRule = InstantTaskExecutorRule()
+```
+
+Whole codes:
+
+```
+class CalcViewModelTest{
+    private lateinit var calcViewModel: CalcViewModel
+    private lateinit var calculations: Calculations
+    @get:Rule
+    var instantTaskExecutorRule = InstantTaskExecutorRule()
+    @Before
+    fun setUp(){
+        calculations = Mockito.mock(Calculations::class.java)
+        Mockito.`when`(calculations.calculateArea(2.1)).thenReturn(13.8474)
+        calcViewModel = CalcViewModel(calculations)
+    }
+    @Test
+    fun calculateArea_radiusSent_UpdateLiveData(){
+        calcViewModel.calculateArea(2.1)
+        val result = calcViewModel.areaValue.value
+        assertThat(result).isEqualTo("13.8474")
+    }
+}
+```
+
+## Test Room
+
+Since we are testing Architecture components, To execute those tasks synchronously, We need to use InstantTaskExecutorRule.
+
+```
+@get:Rule
+var instantTaskExecutorRule = InstantTaskExecutorRule()
+```
+
+Room library has a special data base builder named inMemoryDatabaseBuilder. This inMemoryDatabaseBuilder allows us to create temporary databases for testing. The database will be created in system memory, When we kill the process after testing the app, database will be removed and data will not be persisted.
+
+```
+@Before
+fun setUp(){
+    database = Room.inMemoryDatabaseBuilder(
+        ApplicationProvider.getApplicationContext(),
+        TMDBDatabase::class.java
+    ).build()
+    dao = database.movieDao()
+}
+```
+
+close the data base after the testing is done.
+
+```
+@After
+fun tearDown()
+{
+    database.close()
+}
+```
+
+Finally, write the test function.
+
+```
+@Test
+fun saveMoviesTest() = runBlocking {
+    val movies = listOf(
+        Movie(1,"o1","p1","d1","t1"),
+        Movie(2,"o1","p1","d1","t2"),
+        Movie(3,"o1","p1","d1","t3"),
+        Movie(4,"o1","p1","d1","t4")
+    )
+    dao.saveMovies(movies)
+    val allmovie =  dao.getMovies()
+    assertThat(allmovie).isEqualTo(movies)
+}
+```
+
+## Test LiveData
+
+Add dependency of robolectric.
+
+```
+testImplementation 'org.robolectric:robolectric:4.4'
+```
+
+# Section 18 Clean Architecture
+
+![image-20210616104154697](C:\Users\mxshang\AppData\Roaming\Typora\typora-user-images\image-20210616104154697.png)
+
+## domain/Repository
+
+```
+interface  NewsRepository{
+    suspend fun getNewsHeadLines(): Resource<APIResponse>
+
+    suspend fun getSearchedNews(searchQuery: String): Resource<APIResponse>
+
+    suspend fun saveNews(article: Article)
+
+    suspend fun deleteNews(article: Article)
+
+    fun getSavedNews(): Flow<List<Article>>
+}
+```
+
+## domain/usecase
+
+```
+class DeleteSavedNewsUseCase(private val newsRepository: NewsRepository) {
+    suspend fun excute(article: Article){
+        return newsRepository.deleteNews(article)
+    }
+}
+```
+
+```
+class GetSavedNewsUseCase(private val newsRepository: NewsRepository) {
+    fun excute(): Flow<List<Article>> {
+        return newsRepository.getSavedNews()
+    }
+}
+```
+
+renturn flow的方法不需要标记为suspend，因为方法中的执行不需要挂起，可以很快返回结果，等到调用collect的时候才开始执行。
+
+## Save secret key
+
+gradle.properties:
+
+```
+My_key = "178197bf827d423f990571329e6684be"
+```
+
+build.gradle:
+
+```
+defaultConfig{
+  buildConfigField("String", "AKI_KEY", MY_KEY)
+}
+```
+
+https://guides.codepath.com/android/Storing-Secret-Keys-in-Android#hidden-in-buildconfigs
+
+## Remote data
+
+![image-20210616134228985](C:\Users\mxshang\AppData\Roaming\Typora\typora-user-images\image-20210616134228985.png)
+
+### data/repository
+
+#### dataSource
+
+```
+interface NewsRemoteDataSource {
+    suspend fun getTopHeadLines(): Response<APIResponse>
+}
+```
+
+#### dataSourceImpl
+
+```
+class NewsRemoteDataSourceImpl(
+    private val newAPIService: NewAPIService,
+    private val country: String,
+    private val page: Int
+) : NewsRemoteDataSource{
+    override suspend fun getTopHeadLines(): Response<APIResponse> {
+        return newAPIService.getTopHeadLines(country,page)
+    }
+}
+```
+
+#### data/NewsRepositoryImpl
+
+```
+class NewsRepositoryImpl(
+    private val newsRemoteDataSource: NewsRemoteDataSource
+): NewsRepository {
+    override suspend fun getNewsHeadLines(): Resource<APIResponse> {
+        return responseToResource(newsRemoteDataSource.getTopHeadLines())
+    }
+    private fun responseToResource(response: Response<APIResponse>): Resource<APIResponse> {
+        if(response.isSuccessful){
+            response.body()?.let { result->
+                return Resource.Success(result)
+            }
+        }
+        return Resource.Error(response.message())
+    }
+  }
+```
+
+​	
