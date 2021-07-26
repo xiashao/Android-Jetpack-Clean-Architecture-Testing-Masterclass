@@ -881,7 +881,7 @@ static final class mySuspendLamda extends SuspendLambda implements Function1 {
 
 第八步：suspendSafe 继续return COROUTINE_SUSPENDED，然后里面的线程再度调动resume。这时候直接返回result了。
 
-## 什么是CoroutineContext？
+## CoroutineContext的终极奥义
 
 源码中的解释：
 
@@ -899,33 +899,105 @@ static final class mySuspendLamda extends SuspendLambda implements Function1 {
 
 **Job**：一个可以cancel的task，用来规定生命周期的，这就是为啥我们之前用job来限定activity的生命周期的。
 
-**ContinuationInterceptor**： 监听continuation的，并且可以拦截 resumption。
+**ContinuationInterceptor**： 拦截器可以左右你的协程的执行，同时为了保证它的功能的正确性，context永远将它放在最后面，我们后面会解释。
 
 **CoroutineExceptionHandler**：处理错误机制的。
 
-所以当你启动一个协程，你就可以规定你自己的context, 比如你可以整一个job，JOB是实现了CoroutineContext.Element的，这时候你就可以自己规定一个领域了。
+**这三个非常重要，记住了。**
 
+看到这恍然大雾，CoroutineContext 就是个数据结构啊！
 
-
-## job
+这里我们重点解释下plus方法：
 
 ```
-fun main() = runBlocking { // this: CoroutineScope
-     GlobalScope.launch { // 启动一个新协程并保持对这个作业的引用
-        delay(3000L)
-        println("Hello!")
+public operator fun plus(context: CoroutineContext): CoroutineContext =
+    if (context === EmptyCoroutineContext) this else // fast path -- avoid lambda creation
+        context.fold(this) { acc, element ->
+            val removed = acc.minusKey(element.key)
+            if (removed === EmptyCoroutineContext) element else {
+                // make sure interceptor is always last in the context (and thus is fast to get when present)
+                val interceptor = removed[ContinuationInterceptor]
+                if (interceptor == null) CombinedContext(removed, element) else {
+                    val left = removed.minusKey(ContinuationInterceptor)
+                    if (left === EmptyCoroutineContext) CombinedContext(element, interceptor) else
+                        CombinedContext(CombinedContext(left, element), interceptor)
+                }
+            }
+        }
+```
+
+官方解释是：
+
+> ```
+> /**
+>  * Returns a context containing elements from this context and elements from  other [context].
+>  * The elements from this context with the same key as in the other one are dropped.
+>  */
+> ```
+
+返回一个新的上下文，新的上下文包含插入的新元素。key相同，那么把原来的key的内容删除。
+
+好了，上面的内容可以总结：
+
+1. context如果是EmptyCoroutineContext，直接返回。
+2. 利用`fold`去遍历元素，利用minusKey去去除当前遍历的元素，并返回一个context，也就是removed。
+3. 如果removed是空的，那么就返回当前遍历的element。
+4. 否则获取removed的拦截器，在本文中我们设置为`GlobalScope.launch(context = Dispatchers.IO + Job())`，所以拦截器就是Dispatchers.IO。
+5. left是removed去掉拦截器，在本文中去掉拦截器中就会变成EmptyCoroutineContext
+6. 如果left是EmptyCoroutineContext就返回`CombinedContext(element, interceptor)`，期中element就是我们文中的Job()
+7. 如果不是就会返回CombinedContext(CombinedContext(left, element), interceptor)
+
+
+
+看起来跟套娃一样，但是无论怎么套，interceptor都是放在最后一个的。
+
+假如是JobA+JobB，那返回值就是CombinedContext(A,B)，如果是A+IO，那么就是CombinedContext(A,IO)，
+
+假如是CombinedContext(A,IO）+B， 注意了，这时候先把IO踢出来，`val left = removed.minusKey(ContinuationInterceptor)`
+
+看代码：
+
+```
+public override fun minusKey(key: Key<*>): CoroutineContext {
+        element[key]?.let { return left }
+        val newLeft = left.minusKey(key)
+        return when {
+            newLeft === left -> this
+            newLeft === EmptyCoroutineContext -> element
+            else -> CombinedContext(newLeft, element)
+        }
     }
-    println("world")
-}
 ```
 
-> world
->
-> Process finished with exit code 0
 
-程序结束后，hello，没有打印出来
 
-JVM的生命周期：当程序中的所有非守护线程都终止时，JVM才退出。
+然后left变成什么了？
+
+left.minusKey(key)也就是A.minusKey(key）结果还是A，所以走的是
+
+` newLeft === left -> this`
+
+所以是个A。
+
+`CombinedContext(CombinedContext(left, element), interceptor)`
+
+那么返回的就是CombinedContext(CombinedContext(A, B), IO)
+
+我们需要看CombinedContext的minusKey方法。
+
+
+
+此处我推荐看这个博客。
+
+https://blog.csdn.net/xx23x/article/details/107976319
+
+
+
+
+
+
+
+
 
 ## Dispatchers的终极奥义
 
@@ -1008,3 +1080,263 @@ public final override fun run() {
     }
 }
 ```
+
+最后回调continuation 的resume(getSuccessfulResult(state))完成线程切换。
+
+dispatch方法走到`Dispatcher`的`dispatch`方法, 判断当前运行的task数量，如果小于数量，直接放入线程池队列中，调用`dispatcher.dispatchWithContext(taskToSchedule, this, tailDispatch)`, 这里的taskToSchedule就是我们定义的contiuation。
+
+Debug，可见taskToSchedule的值
+
+> DispatchedContinuation[Dispatchers.IO, Continuation at com.example.coroutinedemo.CoroutineContextDemo.TestContinuationKt$demo$mySuspendLamda$1.invokeSuspend(TestContinuation.kt)@545997b1]
+
+如果线程池满了，就加入等待队列`queue.add(taskToSchedule)`
+
+此时，走到了`coroutineScheduler.dispatch(block, context, tailDispatch)`，**此处即重点。**
+
+先看DefaultDispatcher的值
+
+> DefaultDispatcher@4fcd19b3[Pool Size {core = 8, max = 1024}, Worker States {CPU = 0, blocking = 0, parked = 0, dormant = 0, terminated = 0}, running workers queues = [], global CPU queue size = 0, global blocking queue size = 0, Control State {created workers= 0, blocking tasks = 0, CPUs acquired = 0}]
+
+然后看dispatch的具体内容：
+
+```
+fun dispatch(block: Runnable, taskContext: TaskContext = NonBlockingContext, tailDispatch: Boolean = false) {
+    trackTask() // this is needed for virtual time support
+    val task = createTask(block, taskContext)
+    // try to submit the task to the local queue and act depending on the result
+    val currentWorker = currentWorker()
+    val notAdded = currentWorker.submitToLocalQueue(task, tailDispatch)
+    if (notAdded != null) {
+        if (!addToGlobalQueue(notAdded)) {
+            // Global queue is closed in the last step of close/shutdown -- no more tasks should be accepted
+            throw RejectedExecutionException("$schedulerName was terminated")
+        }
+    }
+    val skipUnpark = tailDispatch && currentWorker != null
+    // Checking 'task' instead of 'notAdded' is completely okay
+    if (task.mode == TASK_NON_BLOCKING) {
+        if (skipUnpark) return
+        signalCpuWork()
+    } else {
+        // Increment blocking tasks anyway
+        signalBlockingWork(skipUnpark = skipUnpark)
+    }
+}
+```
+
+先createTask，这个task的值如下：
+
+> DispatchedContinuation[Dispatchers.IO, Continuation at com.example.coroutinedemo.CoroutineContextDemo.TestContinuationKt$demo$mySuspendLamda$1.invokeSuspend(TestContinuation.kt)@545997b1]
+
+也就是我们自定义的那个TestContinuation.
+
+然后把任务添加到当前队列中：`currentWorker.submitToLocalQueue(task, tailDispatch)`
+
+最后走的是：`signalBlockingWork(skipUnpark = skipUnpark)`去唤醒或者创建一个线程运行Task的run函数。
+
+```
+    private fun signalBlockingWork(skipUnpark: Boolean) {
+        // Use state snapshot to avoid thread overprovision
+        val stateSnapshot = incrementBlockingTasks()
+        if (skipUnpark) return
+        if (tryUnpark()) return
+        if (tryCreateWorker(stateSnapshot)) return
+        tryUnpark() // Try unpark again in case there was race between permit release and parking
+    }
+```
+
+此处重点在`tryCreateWorker(stateSnapshot)`，再看！
+
+```
+private fun tryCreateWorker(state: Long = controlState.value): Boolean {
+    val created = createdWorkers(state)
+    val blocking = blockingTasks(state)
+    val cpuWorkers = (created - blocking).coerceAtLeast(0)
+    /*
+     * We check how many threads are there to handle non-blocking work,
+     * and create one more if we have not enough of them.
+     */
+    if (cpuWorkers < corePoolSize) {
+        val newCpuWorkers = createNewWorker()
+        // If we've created the first cpu worker and corePoolSize > 1 then create
+        // one more (second) cpu worker, so that stealing between them is operational
+        if (newCpuWorkers == 1 && corePoolSize > 1) createNewWorker()
+        if (newCpuWorkers > 0) return true
+    }
+    return false
+}
+```
+
+如果线程数量小于线程池，那么`createNewWorker`
+
+重要代码如下：
+
+	val worker = Worker(newIndex)
+	workers[newIndex] = worker
+	require(newIndex == incrementCreatedWorkers())
+	worker.start()
+	return cpuWorkers + 1
+细看Work，我靠，居然是Thread， 
+
+```
+internal inner class Worker private constructor() : Thread() {
+    init {
+        isDaemon = true
+    }
+    ...
+  }
+```
+
+而且默认是守护线程。
+
+创建后就`worker.start()`而且线程数量+1。请注意`Dispatchers`的`IO`和`Default`共享线程池，只是运行并发数不同。
+
+然后`continuation.resume(getSuccessfulResult(state))`---->`continuationImpl`的resumeWith了。后面就是我们熟悉的东西了。
+
+**现在我们总结下上面的过程：**
+
+第一步：`CoroutineDispatcher` 的`interceptContinuation`函数返回了一个`DispatchedContinuation`对象，这个对象就是用来切换线程的，期中有两个参数`DispatchedContinuation(this, continuation)`,这个this就是我们定义的`dispatcher.IO`,来自于我们自定义的`TestContuation`。
+
+第二步：`DispatchedContinuation`中的`resumeWith`方法中的`dispatcher.dispatch(context, this)`，传入了两个值，一个是`continuation.context`这个continuation就是被代理的原始对象，所以这个`context`就是`dispatcher.IO`了，this就是本身实现的`Runnable`.
+
+第三步：走到`Dispatcher`的`dispatch`方法, 判断当前运行的task数量，如果小于数量，直接放入线程池队列中，然后开启新的线程.
+
+第三步：`Runnable`回调了`continuation.resume(getSuccessfulResult(state))`完成线程切换。
+
+差不多就是这么个过程了，下面就不再看这里了，准备看Job了。
+
+
+
+
+
+## Job的终极奥义
+
+先看Job的官方定义：
+
+> ```
+> * A background job. Conceptually, a job is a cancellable thing with a life-cycle that
+> * culminates in its completion.
+> ```
+
+Job是一个可取消的东西，其生命周期以完成为终点。
+
+看下它的状态定义：
+
+```
+* ### Job states
+*
+* A job has the following states:
+*
+* | **State**                        | [isActive] | [isCompleted] | [isCancelled] |
+* | -------------------------------- | ---------- | ------------- | ------------- |
+* | _New_ (optional initial state)   | `false`    | `false`       | `false`       |
+* | _Active_ (default initial state) | `true`     | `false`       | `false`       |
+* | _Completing_ (transient state)   | `true`     | `false`       | `false`       |
+* | _Cancelling_ (transient state)   | `false`    | `false`       | `true`        |
+* | _Cancelled_ (final state)        | `false`    | `true`        | `true`        |
+* | _Completed_ (final state)        | `false`    | `true`        | `false`       |
+*
+```
+
+关于这些状态，有些重要的解释：
+
+```
+* Usually, a job is created in the _active_ state (it is created and started). However, coroutine builders
+* that provide an optional `start` parameter create a coroutine in the _new_ state when this parameter is set to
+* [CoroutineStart.LAZY]. Such a job can be made _active_ by invoking [start] or [join].
+```
+
+就是说如果是以LAZY的方式启动，那么第一个状态就是 _New_而不是 _Active_
+
+这时候我们再看一下Job的关系，是时候又该祭出这张图了：
+
+![diagram](https://github.com/takahirom/kotlin-coroutines-class-diagram/raw/master/diagram.png)
+
+不得不说，协程家的亲戚关系太密切了，他也是一个element ，话说Dispatcher也是个Element，这样的话，我之前曾写过
+
+```
+override val coroutineContext: CoroutineContext
+    get() = Dispatchers.Main + job
+```
+
+之前不懂，现在隐隐约约觉得似乎明白了不少。
+
+然后官方还很贴心的给了Job的状态变换过程：
+
+```
+* ```
+*                                       wait children
+* +-----+ start  +--------+ complete   +-------------+  finish  +-----------+
+* | New | -----> | Active | ---------> | Completing  | -------> | Completed |
+* +-----+        +--------+            +-------------+          +-----------+
+*                  |  cancel / fail       |
+*                  |     +----------------+
+*                  |     |
+*                  V     V
+*              +------------+                           finish  +-----------+
+*              | Cancelling | --------------------------------> | Cancelled |
+*              +------------+                                   +-----------+
+* ```
+*
+```
+
+总结状态变化:
+
+```
+New: 使用`CoroutineStart.LAZY`方式启动
+Active: `job.star`,当前job没有执行完成
+Cancelling: `job.cancel()`
+Cancelled :`job.cancel()`执行完毕
+Completing：等待子协程
+Completed :完成
+```
+
+常用方法：
+
+1. `isActive` 协程是否存活(注意懒启动)
+2. `isCancelled` 协程是否取消
+3. `isCompleted` 协程是否完成
+4. `cancel()` 取消协程
+5. `start()` 启动协程
+6. `join()` 阻塞等候协程完成
+7. `cancelAndJoin()` 取消并等候协程完成
+8. `invokeOnCompletion( onCancelling: Boolean = false, invokeImmediately: Boolean = true, handler: CompletionHandler)` 监听协程的状态回调
+9. `attachChild(child: ChildJob)` 附加一个子协程到当前协程上
+
+为了方便理解，我决定做一个demo 。
+
+```
+fun main() {
+    val job = GlobalScope.launch(context = Dispatchers.IO,start = CoroutineStart.LAZY) {
+        val job = coroutineContext[Job]
+        println("GlobalScope job : $job")
+        delay(1000)
+    }
+    job.invokeOnCompletion{
+        println("Main job : invokeOnCompletion")
+    }
+    println("Main job : $job")
+    TimeUnit.SECONDS.sleep(1)
+    job.start()
+    println("Main job : $job")
+    job.cancel()
+    println("Main job : $job")
+    TimeUnit.SECONDS.sleep(5)
+}
+```
+
+打印结果：
+
+> Main job : LazyStandaloneCoroutine{New}@6e1567f1
+> Main job : LazyStandaloneCoroutine{Active}@6e1567f1
+> Main job : LazyStandaloneCoroutine{Cancelling}@6e1567f1
+> Main job : invokeOnCompletion
+>
+> Process finished with exit code 0
+
+可见当父job被cancel的时候，子Job也会同时被cancel。而`invokeOnCompletion`只有等job结束后才被调用。
+
+
+
+
+
