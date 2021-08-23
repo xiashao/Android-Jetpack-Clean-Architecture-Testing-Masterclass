@@ -67,7 +67,8 @@ PS：补充下关于内核线程的小知识
 首先你应该先找二营长。
 
 ```
-fun fetch二营长(): 营长 {
+
+suspend fun fetch二营长(): 营长 {
     // make call
     // return 二营长
 }
@@ -883,6 +884,8 @@ static final class mySuspendLamda extends SuspendLambda implements Function1 {
 
 ## CoroutineContext的终极奥义
 
+### 定义
+
 源码中的解释：
 
 > ```
@@ -906,6 +909,8 @@ static final class mySuspendLamda extends SuspendLambda implements Function1 {
 **这三个非常重要，记住了。**
 
 看到这恍然大雾，CoroutineContext 就是个数据结构啊！
+
+### Plus方法
 
 这里我们重点解释下plus方法：
 
@@ -983,19 +988,31 @@ left.minusKey(key)也就是A.minusKey(key）结果还是A，所以走的是
 
 那么返回的就是CombinedContext(CombinedContext(A, B), IO)
 
-我们需要看CombinedContext的minusKey方法。
-
-
-
 此处我推荐看这个博客。
 
 https://blog.csdn.net/xx23x/article/details/107976319
 
+为什么每次都要把拦截器放在最后呢，这和CombinedContext的get方法有关。
+
+`cur.element[key]?.let { return it }`
+
+每次判断的时候都是先判断element，所以把拦截器放在element的位置是最快的。
+
+### 总结
+
+我目前总结的规律如下：
+
+1. **interceptor1 + interceptor2 = (null, interceptor2**)
 
 
 
+2. (a, **interceptor1**) + **interceptor2**  = ((a,**interceptor2** ), **interceptor1**) = (a,**interceptor2**)
 
 
+
+3. **interceptor1**  + (a + **interceptor2**)  = **interceptor1**  + (a, **interceptor2**) = (a,**interceptor1** ) + **interceptor2** = (a,**interceptor2**)
+
+记住，但凡，**interceptor1**  放在后面的，一律以后面为准。
 
 
 
@@ -1004,6 +1021,8 @@ https://blog.csdn.net/xx23x/article/details/107976319
 我们之前已经讲过Dispatchers的基本要义，此处便不再赘述。
 
 我们在这仔细研究下Dispatchers，我们发现他的几种类型本质都是实现了CoroutineDispatcher。
+
+### Dispatchers的内部调用
 
 我们看看CoroutineDispatcher是何方神圣。
 
@@ -1193,7 +1212,7 @@ internal inner class Worker private constructor() : Thread() {
 
 然后`continuation.resume(getSuccessfulResult(state))`---->`continuationImpl`的resumeWith了。后面就是我们熟悉的东西了。
 
-**现在我们总结下上面的过程：**
+### **总结：**
 
 第一步：`CoroutineDispatcher` 的`interceptContinuation`函数返回了一个`DispatchedContinuation`对象，这个对象就是用来切换线程的，期中有两个参数`DispatchedContinuation(this, continuation)`,这个this就是我们定义的`dispatcher.IO`,来自于我们自定义的`TestContuation`。
 
@@ -1220,7 +1239,7 @@ internal inner class Worker private constructor() : Thread() {
 
 Job是一个可取消的东西，其生命周期以完成为终点。
 
-看下它的状态定义：
+### **Job的状态定义**
 
 ```
 * ### Job states
@@ -1336,7 +1355,7 @@ fun main() {
 
 可见当父job被cancel的时候，子Job也会同时被cancel。而`invokeOnCompletion`只有等job结束后才被调用。
 
-
+### Job的链表结构
 
 
 

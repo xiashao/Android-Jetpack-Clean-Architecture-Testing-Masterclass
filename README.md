@@ -1052,6 +1052,8 @@ class GetSavedNewsUseCase(private val newsRepository: NewsRepository) {
 
 renturn flow的方法不需要标记为suspend，因为方法中的执行不需要挂起，可以很快返回结果，等到调用collect的时候才开始执行。
 
+![img](https://developer.android.com/topic/libraries/architecture/images/final-architecture.png)
+
 ## Save secret key
 
 gradle.properties:
